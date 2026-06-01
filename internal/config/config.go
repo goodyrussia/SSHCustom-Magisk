@@ -24,16 +24,24 @@ type Config struct {
 
 	// Derived from the selected profile (loaded from profiles.json).
 	// These are populated by ConfigFromProfile().
-	SSHSNIHost      string `json:"ssh_sni_host,omitempty"`
-	HTTPProxyHost   string `json:"http_proxy_host,omitempty"`
-	HTTPProxyPort   int    `json:"http_proxy_port,omitempty"`
-	PayloadEnabled  bool   `json:"payload_enabled"`
-	Payload         string `json:"payload,omitempty"`
+	SSHSNIHost           string `json:"ssh_sni_host,omitempty"`
+	HTTPProxyHost        string `json:"http_proxy_host,omitempty"`
+	HTTPProxyPort        int    `json:"http_proxy_port,omitempty"`
+	PayloadEnabled       bool   `json:"payload_enabled"`
+	Payload              string `json:"payload,omitempty"`
+	PayloadInjectionType string `json:"payload_injection_type,omitempty"`
+	PayloadMethod        string `json:"payload_method,omitempty"`
+	PayloadFrontQuery    bool   `json:"payload_front_query"`
+	PayloadBackQuery     bool   `json:"payload_back_query"`
+	PayloadDualConnect   bool   `json:"payload_dual_connect"`
+	PayloadSplit         bool   `json:"payload_split"`
+	PayloadUA            string `json:"payload_ua,omitempty"`
 }
 
 // Profile holds a single profile from profiles.json.
 // All fields use FLAT json tags — no nesting.
 type Profile struct {
+	ID   string `json:"id,omitempty"`
 	Name string `json:"name"`
 
 	SSHHost             string `json:"ssh_host"`
@@ -56,8 +64,8 @@ type Profile struct {
 
 // ProfilesFile is the structure of profiles.json.
 type ProfilesFile struct {
-	Current string    `json:"current"`
-	Items   []Profile `json:"items"`
+	SelectedID string    `json:"selected_id"`
+	Profiles   []Profile `json:"profiles"`
 }
 
 // AtomicConfig provides lock-free atomic reads of the current config.
@@ -96,8 +104,8 @@ func DefaultConfig() *Config {
 // DefaultProfiles returns an empty profiles file.
 func DefaultProfiles() *ProfilesFile {
 	return &ProfilesFile{
-		Current: "",
-		Items:   []Profile{},
+		SelectedID: "",
+		Profiles:   []Profile{},
 	}
 }
 
@@ -160,9 +168,9 @@ func SaveProfiles(path string, pf *ProfilesFile) error {
 // GetCurrentProfile returns the currently selected profile from profiles.json,
 // or nil if no profile is selected.
 func GetCurrentProfile(pf *ProfilesFile) *Profile {
-	for i := range pf.Items {
-		if pf.Items[i].Name == pf.Current {
-			return &pf.Items[i]
+	for i := range pf.Profiles {
+		if pf.Profiles[i].ID == pf.SelectedID {
+			return &pf.Profiles[i]
 		}
 	}
 	return nil
@@ -201,6 +209,12 @@ func ConfigFromProfile(base *Config, profile *Profile) *Config {
 	// Payload settings
 	c.PayloadEnabled = profile.PayloadEnabled
 	c.Payload = profile.Payload
+	c.PayloadInjectionType = profile.PayloadInjectionType
+	c.PayloadMethod = profile.PayloadMethod
+	c.PayloadFrontQuery = profile.PayloadFrontQuery
+	c.PayloadBackQuery = profile.PayloadBackQuery
+	c.PayloadDualConnect = profile.PayloadDualConnect
+	c.PayloadSplit = profile.PayloadSplit
 
 	return &c
 }

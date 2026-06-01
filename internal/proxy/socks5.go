@@ -76,17 +76,25 @@ func (s *SOCKS5Server) handle(ctx context.Context, conn net.Conn) {
 	switch req[3] {
 	case 1: // IPv4
 		addr := make([]byte, 4)
-		io.ReadFull(conn, addr)
+		if _, err := io.ReadFull(conn, addr); err != nil {
+			return
+		}
 		host = net.IP(addr).String()
 	case 3: // Domain name
 		lenb := make([]byte, 1)
-		io.ReadFull(conn, lenb)
+		if _, err := io.ReadFull(conn, lenb); err != nil {
+			return
+		}
 		dom := make([]byte, lenb[0])
-		io.ReadFull(conn, dom)
+		if _, err := io.ReadFull(conn, dom); err != nil {
+			return
+		}
 		host = string(dom)
 	case 4: // IPv6
 		addr := make([]byte, 16)
-		io.ReadFull(conn, addr)
+		if _, err := io.ReadFull(conn, addr); err != nil {
+			return
+		}
 		host = "[" + net.IP(addr).String() + "]"
 	default:
 		conn.Write([]byte{5, 8, 0, 1, 0, 0, 0, 0, 0, 0})
@@ -94,7 +102,9 @@ func (s *SOCKS5Server) handle(ctx context.Context, conn net.Conn) {
 	}
 
 	portBuf := make([]byte, 2)
-	io.ReadFull(conn, portBuf)
+	if _, err := io.ReadFull(conn, portBuf); err != nil {
+		return
+	}
 	port := binary.BigEndian.Uint16(portBuf)
 	target := fmt.Sprintf("%s:%d", host, port)
 
@@ -131,14 +141,9 @@ func relay(a, b net.Conn) {
 		defer func() { done <- struct{}{} }()
 		buf := make([]byte, copyBufSize)
 		io.CopyBuffer(dst, src, buf)
-		// Half-close: signal EOF to the other side if possible
-		type halfCloser interface {
-			CloseWrite() error
-		}
-		if hc, ok := dst.(halfCloser); ok {
+		// Half-close: signal EOF to the other side
+		if hc, ok := dst.(interface{ CloseWrite() error }); ok {
 			hc.CloseWrite()
-		} else {
-			dst.Close()
 		}
 	}
 

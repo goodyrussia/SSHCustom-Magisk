@@ -124,8 +124,23 @@ func (c *Client) keepAlive(interval time.Duration, maxMissed int) {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			_, _, err := c.sshConn.SendRequest("keepalive@openssh.com", true, nil)
-			if err != nil {
+			// Use a goroutine+channel to add timeout for the send request
+			type keepaliveResult struct {
+				err error
+			}
+			ch := make(chan keepaliveResult, 1)
+			go func() {
+				_, _, err := c.sshConn.SendRequest("keepalive@openssh.com", true, nil)
+				ch <- keepaliveResult{err: err}
+			}()
+			var sErr error
+			select {
+			case res := <-ch:
+				sErr = res.err
+			case <-time.After(interval / 2):
+				sErr = fmt.Errorf("keepalive timeout")
+			}
+			if sErr != nil {
 				missed++
 				if missed >= maxMissed {
 					c.sshConn.Close()

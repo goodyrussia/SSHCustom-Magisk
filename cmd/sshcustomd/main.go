@@ -80,7 +80,7 @@ func main() {
 	// Shared state
 	st := &api.DaemonState{
 		StartedAt:      time.Now(),
-		CurrentProfile: profiles.Current,
+		CurrentProfile: profiles.SelectedID,
 	}
 
 	var sshClient atomic.Pointer[issh.Client]
@@ -107,7 +107,7 @@ func main() {
 		pf, err := config.LoadProfiles(*profilesPath)
 		if err == nil {
 			if profileName != "" {
-				pf.Current = profileName
+				pf.SelectedID = profileName
 				config.SaveProfiles(*profilesPath, pf)
 				st.CurrentProfile = profileName
 			}
@@ -266,6 +266,15 @@ func runTunnel(
 			HTTPProxyPort:     cfg.HTTPProxyPort,
 			PayloadEnabled:    cfg.PayloadEnabled,
 			Payload:           cfg.Payload,
+			PayloadOpts: transport.PayloadOpts{
+				InjectionType: transport.InjectionType(cfg.PayloadInjectionType),
+				Method:        cfg.PayloadMethod,
+				FrontQuery:    cfg.PayloadFrontQuery,
+				BackQuery:     cfg.PayloadBackQuery,
+				DualConnect:   cfg.PayloadDualConnect,
+				Split:         cfg.PayloadSplit,
+				UserAgent:     cfg.PayloadUA,
+			},
 			ConnectTimeout:    25 * time.Second,
 			KeepAliveInterval: 30 * time.Second,
 			KeepAliveMax:      3,

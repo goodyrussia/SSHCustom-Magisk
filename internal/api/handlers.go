@@ -36,6 +36,8 @@ func (s *DaemonState) snapshot() StatusResponse {
 	}
 	return StatusResponse{
 		Connected:         s.Connected,
+		Running:           s.Connected,
+		Reconnecting:      false,
 		Profile:           s.CurrentProfile,
 		SSHHost:           "",
 		SSHMode:           "",
@@ -43,6 +45,11 @@ func (s *DaemonState) snapshot() StatusResponse {
 		CPUPct:            s.CPUPct,
 		UptimeSeconds:     uptime,
 		ActiveConnections: int(atomic.LoadInt32(&s.ActiveConns)),
+		APIPort:           0,
+		SocksPort:         0,
+		TproxyPort:        0,
+		DNSPort:           0,
+		RoutingMode:       "",
 		Version:           version.Version,
 		LastError:         s.LastError,
 	}
@@ -105,12 +112,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := s.AtomicConfig.Get()
 	snap := s.State.snapshot()
 
-	// Fill in SSH details from current config
+	// Fill in SSH details and port info from current config
 	snap.SSHHost = cfg.SSHHost
 	snap.SSHMode = cfg.SSHMode
-	if snap.Profile == "" {
-		snap.Profile = s.State.CurrentProfile
-	}
+	snap.APIPort = cfg.APIPort
+	snap.SocksPort = cfg.SocksPort
 
 	writeJSON(w, 200, snap)
 }
@@ -199,9 +205,10 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "load profiles: "+err.Error())
 			return
 		}
-		items := make([]ProfileItem, len(pf.Items))
-		for i, p := range pf.Items {
+		items := make([]ProfileItem, len(pf.Profiles))
+		for i, p := range pf.Profiles {
 			items[i] = ProfileItem{
+				ID:                  p.ID,
 				Name:                p.Name,
 				SSHHost:             p.SSHHost,
 				SSHPort:             p.SSHPort,
@@ -222,8 +229,8 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		writeJSON(w, 200, ProfilesResponse{
-			Current: pf.Current,
-			Items:   items,
+			SelectedID: pf.SelectedID,
+			Profiles:   items,
 		})
 
 	case http.MethodPut:
@@ -233,11 +240,12 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pf := &config.ProfilesFile{
-			Current: req.Current,
-			Items:   make([]config.Profile, len(req.Items)),
+			SelectedID: req.SelectedID,
+			Profiles:   make([]config.Profile, len(req.Profiles)),
 		}
-		for i, item := range req.Items {
-			pf.Items[i] = config.Profile{
+		for i, item := range req.Profiles {
+			pf.Profiles[i] = config.Profile{
+				ID:                  item.ID,
 				Name:                item.Name,
 				SSHHost:             item.SSHHost,
 				SSHPort:             item.SSHPort,
@@ -262,8 +270,8 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// If the current profile changed, update state
-		if pf.Current != "" {
-			s.State.CurrentProfile = pf.Current
+		if pf.SelectedID != "" {
+			s.State.CurrentProfile = pf.SelectedID
 			// Merge profile into config
 			if profile := config.GetCurrentProfile(pf); profile != nil {
 				newCfg := config.ConfigFromProfile(s.AtomicConfig.Get(), profile)
@@ -297,12 +305,12 @@ func (s *Server) handleCurrentProfile(w http.ResponseWriter, r *http.Request) {
 
 	profile := config.GetCurrentProfile(pf)
 	if profile == nil {
-		writeJSON(w, 200, map[string]interface{}{"current": "", "profile": nil})
+		writeJSON(w, 200, map[string]interface{}{"selected_id": "", "profile": nil})
 		return
 	}
 
 	item := ProfileItem{
-		Name:                profile.Name,
+		ID:                  profile.ID,
 		SSHHost:             profile.SSHHost,
 		SSHPort:             profile.SSHPort,
 		SSHUser:             profile.SSHUser,
@@ -321,8 +329,8 @@ func (s *Server) handleCurrentProfile(w http.ResponseWriter, r *http.Request) {
 		PayloadSplit:        profile.PayloadSplit,
 	}
 	writeJSON(w, 200, map[string]interface{}{
-		"current": pf.Current,
-		"profile": item,
+		"selected_id": pf.SelectedID,
+		"profile":     item,
 	})
 }
 
@@ -339,21 +347,29 @@ func (s *Server) handleTunnelStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req TunnelRequest
-	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, 400, "invalid JSON: "+err.Error())
+			return
+		}
 	}
 
 	// If a specific profile is requested, update the current profile
 	if req.Profile != "" {
 		pf, err := config.LoadProfiles(s.ProfilesPath)
-		if err == nil {
-			pf.Current = req.Profile
-			config.SaveProfiles(s.ProfilesPath, pf)
-			s.State.CurrentProfile = req.Profile
-			if profile := config.GetCurrentProfile(pf); profile != nil {
-				newCfg := config.ConfigFromProfile(s.AtomicConfig.Get(), profile)
-				s.AtomicConfig.Set(newCfg)
-			}
+		if err != nil {
+			writeError(w, 500, "load profiles: "+err.Error())
+			return
+		}
+		pf.SelectedID = req.Profile
+		if err := config.SaveProfiles(s.ProfilesPath, pf); err != nil {
+			writeError(w, 500, "save profile: "+err.Error())
+			return
+		}
+		s.State.CurrentProfile = req.Profile
+		if profile := config.GetCurrentProfile(pf); profile != nil {
+			newCfg := config.ConfigFromProfile(s.AtomicConfig.Get(), profile)
+			s.AtomicConfig.Set(newCfg)
 		}
 	}
 

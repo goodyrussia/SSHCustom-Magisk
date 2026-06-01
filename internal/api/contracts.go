@@ -4,6 +4,8 @@ package api
 // StatusResponse is returned by GET /api/v1/status.
 type StatusResponse struct {
 	Connected         bool    `json:"connected"`
+	Running           bool    `json:"running"`
+	Reconnecting      bool    `json:"reconnecting"`
 	Profile           string  `json:"profile"`
 	SSHHost           string  `json:"ssh_host"`
 	SSHMode           string  `json:"ssh_mode"`
@@ -11,6 +13,11 @@ type StatusResponse struct {
 	CPUPct            float64 `json:"cpu_pct"`
 	UptimeSeconds     int64   `json:"uptime_seconds"`
 	ActiveConnections int     `json:"active_connections"`
+	APIPort           int     `json:"api_port"`
+	SocksPort         int     `json:"socks_port"`
+	TproxyPort        int     `json:"tproxy_port"`
+	DNSPort           int     `json:"dns_port"`
+	RoutingMode       string  `json:"routing_mode"`
 	Version           string  `json:"version"`
 	LastError         string  `json:"last_error,omitempty"`
 }
@@ -29,6 +36,7 @@ type ConfigResponse struct {
 
 // ProfileItem mirrors config.Profile for the JSON API.
 type ProfileItem struct {
+	ID                  string `json:"id,omitempty"`
 	Name                string `json:"name"`
 	SSHHost             string `json:"ssh_host"`
 	SSHPort             int    `json:"ssh_port"`
@@ -50,8 +58,8 @@ type ProfileItem struct {
 
 // ProfilesResponse is returned by GET /api/v1/profiles.
 type ProfilesResponse struct {
-	Current string        `json:"current"`
-	Items   []ProfileItem `json:"items"`
+	SelectedID string        `json:"selected_id"`
+	Profiles   []ProfileItem `json:"profiles"`
 }
 
 // TunnelRequest is the body of POST /api/v1/tunnel/start.
