@@ -1,0 +1,6 @@
+id=sshcustom
+name=SSHCustom-Magisk
+version=v3.1.0
+versionCode=3100
+author=GoodyOG
+description=Transparent TCP/UDP proxy via TPROXY with hev-socks5-tproxy engine. WebUI dashboard at http://127.0.0.1:9190/

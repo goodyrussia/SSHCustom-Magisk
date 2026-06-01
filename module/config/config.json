@@ -1,0 +1,10 @@
+{
+    "ssh_host": "",
+    "ssh_port": 22,
+    "ssh_user": "",
+    "ssh_password": "",
+    "ssh_mode": "direct",
+    "socks_port": 1080,
+    "api_port": 9190,
+    "work_dir": "/data/adb/sshcustom"
+}

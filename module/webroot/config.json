@@ -1,0 +1,12 @@
+{
+    "id": "sshcustom-magisk",
+    "name": "SSHCustom-Magisk",
+    "version": "3.1.0",
+    "versionCode": 310,
+    "author": "SSHCustom Team",
+    "description": "WebUI for SSHCustom-Magisk — route Android TCP traffic through an SSH tunnel with transparent proxying. Manage profiles, monitor tunnel health, and test latency.",
+    "icon": "icon.png",
+    "windowResize": false,
+    "backInterceptor": "javascript",
+    "contentSecurityPolicy": "default-src 'self' data: blob: {domain}; script-src 'self' 'unsafe-inline' 'unsafe-eval' {domain}; style-src 'self' 'unsafe-inline' {domain}; connect-src *; img-src *;"
+}

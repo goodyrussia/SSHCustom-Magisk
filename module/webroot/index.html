@@ -1,0 +1,1032 @@
+<!doctype html>
+<html lang="en" data-theme-resolved="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>SSHCustom-Magisk</title>
+  <style>
+    :root {
+      --top-inset: var(--window-inset-top, 0px);
+      --bottom-inset: var(--window-inset-bottom, 0px);
+
+      --bg: #0f1117;
+      --card: #1a1d28;
+      --accent: #4da6ff;
+      --accent-dim: #3a7fcc;
+      --text: #e0e0e0;
+      --text-dim: #999aa2;
+      --text-muted: #6b6d78;
+      --border: #2a2d3a;
+      --red: #ff5c5c;
+      --green: #4caf7c;
+      --yellow: #f0c040;
+      --red-bg: #2a1a1f;
+      --green-bg: #172a1f;
+      --yellow-bg: #2a2818;
+      --input-bg: #141620;
+      --radius: 12px;
+      --radius-lg: 18px;
+      --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --mono: "JetBrains Mono", "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    [hidden] { display: none !important; }
+
+    /* ── Layout ── */
+    .app {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      padding: calc(12px + var(--top-inset)) 16px 8px;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h1 { margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.01em; }
+    .spacer { flex: 1; }
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 99px;
+      background: var(--card);
+    }
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: 0 0 7px 2px var(--red);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .status-dot.connected { background: var(--green); box-shadow: 0 0 7px 3px var(--green); }
+    .status-dot.reconnecting { background: var(--yellow); box-shadow: 0 0 6px 2px var(--yellow); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+    .pages {
+      flex: 1;
+      width: min(100%, 800px);
+      margin: 0 auto;
+      padding: 12px 14px calc(76px + var(--bottom-inset));
+    }
+    section:not([hidden]) {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      animation: fadeUp 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px) scale(0.98); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    /* ── Cards ── */
+    .card {
+      border-radius: var(--radius-lg);
+      background: var(--card);
+      padding: 16px;
+      border: 1px solid var(--border);
+    }
+    .card-clickable { cursor: pointer; transition: background 0.2s; }
+    .card-clickable:active { background: #222535; }
+    .card-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .resource-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .stat-box {
+      background: var(--input-bg);
+      border-radius: var(--radius);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .stat-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+    .stat-val { font-size: 1.25rem; font-weight: 800; color: var(--text); }
+    .stat-sub  { font-size: 0.72rem; color: var(--text-muted); }
+
+    .latency-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      min-height: 52px;
+      padding: 0 2px;
+    }
+    .latency-info { flex: 1; min-width: 0; }
+    .latency-btn {
+      padding: 10px 20px;
+      border-radius: 99px;
+      background: var(--accent);
+      color: #0a0e18;
+      font-weight: 700;
+      font-size: 0.82rem;
+      border: none;
+      flex-shrink: 0;
+    }
+    .latency-btn:disabled { opacity: 0.5; }
+
+    .action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .action-row.single { grid-template-columns: 1fr; }
+
+    .btn {
+      min-height: 46px;
+      border: none;
+      border-radius: 99px;
+      font-weight: 700;
+      font-size: 0.875rem;
+      padding: 0 20px;
+    }
+    .btn-primary { background: var(--accent); color: #0a0e18; }
+    .btn-outline { background: transparent; color: var(--accent); border: 1.5px solid var(--accent); }
+    .btn-danger { background: var(--red-bg); color: var(--red); border: 1.5px solid var(--red); }
+    .btn:disabled { opacity: 0.4; pointer-events: none; }
+    .btn:active { transform: scale(0.97); }
+
+    /* ── Profile list ── */
+    .pf-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .pf-count { font-size: 0.78rem; color: var(--text-dim); }
+    .pf-list { display: flex; flex-direction: column; gap: 6px; }
+    .pf-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--input-bg);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      border: 1.5px solid transparent;
+      transition: border 0.2s;
+    }
+    .pf-item.selected { border-color: var(--accent); background: #192235; }
+    .pf-info { flex: 1; min-width: 0; }
+    .pf-name { font-weight: 700; font-size: 0.9rem; }
+    .pf-detail { font-size: 0.72rem; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pf-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .pf-badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 99px;
+      background: var(--accent);
+      color: #0a0e18;
+      white-space: nowrap;
+    }
+    .pf-btn {
+      width: 34px; height: 34px;
+      border-radius: 50%;
+      background: transparent;
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      padding: 0;
+    }
+    .pf-btn:active { background: var(--card); }
+
+    /* ── Modal ── */
+    .modal-backdrop {
+      position: fixed; inset: 0; z-index: 50;
+      background: rgba(0,0,0,0.65);
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      width: min(100%, 820px);
+      max-height: 92vh;
+      overflow: auto;
+      border-radius: 24px 24px 0 0;
+      background: var(--card);
+      padding: 20px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      border: 1px solid var(--border);
+      border-bottom: none;
+    }
+    .modal-head { display: flex; align-items: center; gap: 10px; }
+    .modal-title { margin: 0; font-size: 1.05rem; font-weight: 800; }
+
+    /* ── Form ── */
+    .field-group { display: flex; flex-direction: column; gap: 10px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .field-full { grid-column: 1 / -1; }
+    .field-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-dim);
+      margin-bottom: -6px;
+    }
+    input, select, textarea {
+      width: 100%;
+      min-height: 44px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0 14px;
+      background: var(--input-bg);
+      color: var(--text);
+      outline: none;
+      font-size: 0.875rem;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    textarea {
+      min-height: 100px;
+      padding: 12px 14px;
+      resize: vertical;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+    }
+    select { appearance: none; padding-right: 32px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999aa2' stroke-width='3'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 36px;
+      cursor: pointer;
+    }
+    .checkbox-row input[type=checkbox] {
+      width: 20px; height: 20px;
+      min-height: unset;
+      accent-color: var(--accent);
+      flex-shrink: 0;
+    }
+    .checkbox-label { font-size: 0.82rem; font-weight: 600; }
+
+    .section-title {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin-bottom: 2px;
+    }
+
+    /* ── Settings list ── */
+    .setting-list { display: flex; flex-direction: column; gap: 4px; }
+    .setting-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--input-bg);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+    }
+    .setting-icon {
+      width: 38px; height: 38px;
+      border-radius: 50%;
+      background: #1e2d48;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.7rem;
+      flex-shrink: 0;
+    }
+    .setting-info { flex: 1; }
+    .setting-name { font-weight: 700; font-size: 0.85rem; }
+    .setting-val { font-size: 0.72rem; color: var(--text-muted); }
+
+    .route-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 99px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      background: #1e2d48;
+      color: var(--accent);
+    }
+
+    /* ── Nav ── */
+    .nav-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      z-index: 30;
+      display: flex;
+      align-items: stretch;
+      justify-content: space-around;
+      height: calc(60px + var(--bottom-inset));
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      padding-bottom: var(--bottom-inset);
+    }
+    .nav-tab {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      padding: 6px 0;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      position: relative;
+    }
+    .nav-tab.active { color: var(--accent); }
+    .nav-tab.active::before {
+      content: "";
+      position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+      width: 40px; height: 3px;
+      border-radius: 0 0 3px 3px;
+      background: var(--accent);
+    }
+    .nav-icon { width: 21px; height: 21px; }
+    .nav-label { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.02em; }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed;
+      bottom: calc(80px + var(--bottom-inset));
+      left: 50%; transform: translateX(-50%) translateY(120px);
+      visibility: hidden;
+      min-height: 48px;
+      padding: 12px 18px;
+      border-radius: 14px;
+      z-index: 60;
+      background: var(--card);
+      color: var(--text);
+      font-size: 0.8125rem;
+      font-weight: 700;
+      border: 1px solid var(--border);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      transition: transform 0.35s cubic-bezier(0.2, 0, 0, 1);
+      white-space: nowrap;
+      max-width: calc(100vw - 24px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); visibility: visible; }
+    .toast.err { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+
+    @media (max-width: 500px) {
+      .pages { padding: 10px 10px calc(72px + var(--bottom-inset)); }
+      .card { padding: 14px; }
+      .resource-row { grid-template-columns: 1fr; }
+      .field-row { grid-template-columns: 1fr; }
+      .field-full { grid-column: auto; }
+      .header h1 { font-size: 1rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <h1>SSHCustom</h1>
+      <div class="spacer"></div>
+      <div class="status-chip">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="statusLabel">Disconnected</span>
+      </div>
+    </header>
+
+    <!-- Pages -->
+    <div class="pages">
+      <!-- HOME -->
+      <section id="pg-home">
+        <!-- Connection status + profile info -->
+        <div class="card" id="connCard">
+          <div class="card-row">
+            <div style="width:46px;height:46px;border-radius:50%;background:#1e2d48;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:900;font-size:0.7rem;color:var(--accent);" id="connIcon">OFF</div>
+            <div style="flex:1;min-width:0;">
+              <div class="stat-val" style="font-size:1rem;" id="connTitle">Disconnected</div>
+              <div class="stat-sub" id="connSub">Tap Start Tunnel to connect</div>
+              <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;" id="connChips"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Start/Stop -->
+        <div class="action-row single" id="tunnelActions">
+          <button class="btn btn-primary" id="btnStartTunnel" onclick="tunnel('start')">Start Tunnel</button>
+          <button class="btn btn-danger" id="btnStopTunnel" onclick="tunnel('stop')" hidden>Stop Tunnel</button>
+        </div>
+
+        <!-- Resources -->
+        <div class="resource-row">
+          <div class="stat-box">
+            <span class="stat-label">Memory</span>
+            <span class="stat-val" id="memVal">-- MB</span>
+            <span class="stat-sub" id="memSub">RSS</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">CPU</span>
+            <span class="stat-val" id="cpuVal">--%</span>
+            <span class="stat-sub">daemon process</span>
+          </div>
+        </div>
+
+        <!-- Latency -->
+        <div class="card card-clickable" onclick="testLatency()">
+          <div class="latency-row">
+            <div class="latency-info">
+              <div class="stat-label">Latency (tunnel)</div>
+              <div class="stat-val" style="font-size:1.05rem;" id="latVal">-- ms</div>
+              <div class="stat-sub" id="latSub">Tap to ping Google (8.8.8.8) through tunnel</div>
+            </div>
+            <button class="latency-btn" id="btnLatency" onclick="event.stopPropagation();testLatency();">Test</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- PROFILES -->
+      <section id="pg-profiles" hidden>
+        <div class="pf-header">
+          <span class="pf-count" id="pfCount">0 profiles</span>
+          <div class="spacer"></div>
+          <button class="btn btn-primary" style="min-height:36px;font-size:0.78rem;padding:0 16px;" onclick="openEditor()">+ Add Profile</button>
+        </div>
+        <div class="pf-list" id="pfList">
+          <div class="pf-item"><div class="pf-info"><div class="pf-name">No profiles</div><div class="pf-detail">Create a profile to get started</div></div></div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="pg-settings" hidden>
+        <div class="section-title">Ports</div>
+        <div class="setting-list">
+          <div class="setting-item">
+            <div class="setting-icon">W</div>
+            <div class="setting-info"><div class="setting-name">WebUI</div><div class="setting-val" id="portWebUI">127.0.0.1:9190</div></div>
+          </div>
+          <div class="setting-item">
+            <div class="setting-icon">S</div>
+            <div class="setting-info"><div class="setting-name">SOCKS5</div><div class="setting-val" id="portSOCKS">127.0.0.1:1080</div></div>
+          </div>
+          <div class="setting-item">
+            <div class="setting-icon">T</div>
+            <div class="setting-info"><div class="setting-name">TPROXY</div><div class="setting-val" id="portTPROXY">1088</div></div>
+          </div>
+          <div class="setting-item">
+            <div class="setting-icon">D</div>
+            <div class="setting-info"><div class="setting-name">DNS</div><div class="setting-val" id="portDNS">1053</div></div>
+          </div>
+        </div>
+
+        <div class="section-title" style="margin-top:6px;">Routing Mode</div>
+        <div class="setting-list">
+          <div class="setting-item">
+            <div class="setting-icon">R</div>
+            <div class="setting-info"><div class="setting-name">Mode</div><div class="setting-val" id="routeMode"><span class="route-chip">TPROXY</span></div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Nav Bar -->
+    <nav class="nav-bar">
+      <button class="nav-tab active" data-pg="home" onclick="showPage('home')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span class="nav-label">Home</span>
+      </button>
+      <button class="nav-tab" data-pg="profiles" onclick="showPage('profiles')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        <span class="nav-label">Profiles</span>
+      </button>
+      <button class="nav-tab" data-pg="settings" onclick="showPage('settings')">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        <span class="nav-label">Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Profile Editor Modal -->
+  <div class="modal-backdrop" id="editorModal" onclick="if(event.target===this)closeEditor()">
+    <div class="modal">
+      <div class="modal-head">
+        <h3 class="modal-title" id="editorTitle">New Profile</h3>
+        <div class="spacer"></div>
+        <button class="btn btn-outline" style="min-height:34px;font-size:0.75rem;padding:0 14px;" onclick="closeEditor()">Cancel</button>
+      </div>
+      <div class="field-group">
+        <div class="field-row">
+          <div>
+            <div class="field-label">Name</div>
+            <input id="efName" placeholder="My Profile">
+          </div>
+          <div>
+            <div class="field-label">SSH Host</div>
+            <input id="efHost" placeholder="ssh.example.com">
+          </div>
+        </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">SSH Port</div>
+            <input id="efPort" type="number" value="22" inputmode="numeric">
+          </div>
+          <div>
+            <div class="field-label">Username</div>
+            <input id="efUser" placeholder="root">
+          </div>
+        </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">Password</div>
+            <input id="efPass" type="password" placeholder="••••••••">
+          </div>
+          <div>
+            <div class="field-label">Transport Mode</div>
+            <select id="efMode" onchange="onModeChange()">
+              <option value="direct">Direct SSH</option>
+              <option value="sni">SNI</option>
+              <option value="sni_http_proxy">SNI + HTTP Proxy</option>
+            </select>
+          </div>
+        </div>
+        <!-- SNI fields -->
+        <div class="field-row" id="efSniRow" hidden>
+          <div class="field-full">
+            <div class="field-label">SNI Host</div>
+            <input id="efSniHost" placeholder="cdn.example.com">
+          </div>
+        </div>
+        <!-- HTTP Proxy fields -->
+        <div id="efProxyRow" hidden>
+          <div class="field-row">
+            <div>
+              <div class="field-label">Proxy Host</div>
+              <input id="efProxyHost" placeholder="proxy.example.com">
+            </div>
+            <div>
+              <div class="field-label">Proxy Port</div>
+              <input id="efProxyPort" type="number" value="8080" inputmode="numeric">
+            </div>
+          </div>
+        </div>
+        <!-- Payload Section -->
+        <div class="section-title" style="margin-top:4px;">Payload Injection</div>
+        <div>
+          <div class="field-label">Payload Template</div>
+          <textarea id="efPayload" placeholder="GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]">GET / HTTP/1.1[crlf]Host: [host][crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]</textarea>
+        </div>
+        <div class="field-row">
+          <div>
+            <div class="field-label">Injection Type</div>
+            <select id="efInjectionType">
+              <option value="normal">Normal</option>
+              <option value="front">Front</option>
+              <option value="back">Back</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">Method</div>
+            <select id="efMethod">
+              <option value="CONNECT">CONNECT</option>
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <label class="checkbox-row"><input type="checkbox" id="efFrontQuery"><span class="checkbox-label">Front Query</span></label>
+          <label class="checkbox-row"><input type="checkbox" id="efBackQuery"><span class="checkbox-label">Back Query</span></label>
+          <label class="checkbox-row"><input type="checkbox" id="efDualConnect"><span class="checkbox-label">Dual Connect</span></label>
+          <label class="checkbox-row"><input type="checkbox" id="efSplit"><span class="checkbox-label">Split</span></label>
+        </div>
+      </div>
+      <div class="action-row" style="grid-template-columns:1fr 1fr 1fr;">
+        <button class="btn btn-primary" onclick="saveProfile(false)">Save</button>
+        <button class="btn btn-primary" onclick="saveProfile(true)" style="background:var(--accent-dim);">Save &amp; Select</button>
+        <button class="btn btn-danger" id="efDeleteBtn" style="display:none;" onclick="deleteProfile()">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ── Globals ──
+    const API = (location.protocol === 'file:' || location.port !== '9190')
+      ? 'http://127.0.0.1:9190'
+      : location.origin;
+
+    let currentPage = 'home';
+    let statusTimer = null;
+    let toastTimer = null;
+    let profiles = [];
+    let selectedProfileId = '';
+    let editingId = '';
+
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+
+    // ── API helpers ──
+    async function apiGet(path, timeout = 6000) {
+      const res = await fetch(API + path, { signal: AbortSignal.timeout(timeout) });
+      if (!res.ok) throw new Error(await res.text() || 'HTTP ' + res.status);
+      return res.json();
+    }
+    async function apiPut(path, body, timeout = 8000) {
+      const res = await fetch(API + path, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeout)
+      });
+      if (!res.ok) throw new Error(await res.text() || 'HTTP ' + res.status);
+      return res.json();
+    }
+    async function apiPost(path, body, timeout = 10000) {
+      const res = await fetch(API + path, {
+        method: 'POST',
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(timeout)
+      });
+      if (!res.ok) throw new Error(await res.text() || 'HTTP ' + res.status);
+      return res.json();
+    }
+
+    // ── Toast ──
+    function toast(msg, isErr) {
+      const el = $('toast');
+      el.textContent = msg;
+      el.className = 'toast show' + (isErr ? ' err' : '');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+    }
+
+    // ── Tab Navigation ──
+    function showPage(pg) {
+      currentPage = pg;
+      ['home','profiles','settings'].forEach(p => {
+        const el = $('pg-' + p);
+        if (el) el.hidden = p !== pg;
+      });
+      document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('active', b.dataset.pg === pg));
+      if (pg === 'profiles') loadProfiles();
+    }
+
+    function fmtMb(bytes) {
+      if (!bytes && bytes !== 0) return '-- MB';
+      return (bytes / 1048576).toFixed(1) + ' MB';
+    }
+    function fmtUptime(s) {
+      s = Number(s || 0);
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      return h ? h + 'h ' + m + 'm' : m ? m + 'm ' + sec + 's' : sec + 's';
+    }
+
+    // ── Status Polling ──
+    async function pollStatus() {
+      try {
+        const st = await apiGet('/api/v1/status');
+
+        // Connection status
+        const connected = !!(st.connected);
+        const running = !!(st.running);
+        const reconnecting = !!(st.reconnecting);
+
+        if (connected) {
+          $('statusDot').className = 'status-dot connected';
+          $('statusLabel').textContent = 'Connected';
+          $('connIcon').textContent = 'ON';
+          $('connIcon').style.background = '#172a1f';
+          $('connIcon').style.color = 'var(--green)';
+          $('connTitle').textContent = 'Connected';
+          $('connSub').textContent = st.last_error || st.profile || 'Tunnel active';
+        } else if (reconnecting) {
+          $('statusDot').className = 'status-dot reconnecting';
+          $('statusLabel').textContent = 'Reconnecting';
+          $('connIcon').textContent = '··';
+          $('connIcon').style.background = '#2a2818';
+          $('connIcon').style.color = 'var(--yellow)';
+          $('connTitle').textContent = 'Reconnecting';
+          $('connSub').textContent = st.last_error || 'Retrying SSH connection...';
+        } else if (running) {
+          $('statusDot').className = 'status-dot reconnecting';
+          $('statusLabel').textContent = 'Connecting';
+          $('connIcon').textContent = '··';
+          $('connIcon').style.background = '#2a2818';
+          $('connIcon').style.color = 'var(--yellow)';
+          $('connTitle').textContent = 'Connecting';
+          $('connSub').textContent = st.last_error || 'Establishing tunnel...';
+        } else {
+          $('statusDot').className = 'status-dot';
+          $('statusLabel').textContent = 'Disconnected';
+          $('connIcon').textContent = 'OFF';
+          $('connIcon').style.background = '#1e2d48';
+          $('connIcon').style.color = 'var(--accent)';
+          $('connTitle').textContent = 'Disconnected';
+          $('connSub').textContent = 'Tap Start Tunnel to connect';
+        }
+
+        // Chips: profile name, transport mode, SSH host
+        const chips = [];
+        if (st.profile) chips.push(st.profile);
+        if (st.ssh_mode) chips.push(st.ssh_mode.toUpperCase());
+        if (st.ssh_host) chips.push(st.ssh_host);
+        $('connChips').innerHTML = chips.map(c =>
+          '<span style="display:inline-flex;align-items:center;padding:3px 10px;border-radius:99px;font-size:0.7rem;font-weight:700;background:var(--input-bg);color:var(--text-dim);">' + esc(c) + '</span>'
+        ).join('');
+
+        // Resources
+        $('memVal').textContent = fmtMb(st.mem_mb ? st.mem_mb * 1048576 : st.memory_rss_bytes);
+        $('cpuVal').textContent = (st.cpu_pct != null ? Number(st.cpu_pct).toFixed(1) : '--') + '%';
+
+        // Tunnel buttons
+        if (connected || running) {
+          $('btnStartTunnel').hidden = true;
+          $('btnStopTunnel').hidden = false;
+          $('tunnelActions').classList.remove('single');
+        } else {
+          $('btnStartTunnel').hidden = false;
+          $('btnStopTunnel').hidden = true;
+          $('tunnelActions').classList.add('single');
+        }
+
+        // Settings ports from status or use defaults
+        if (st.api_port) $('portWebUI').textContent = '127.0.0.1:' + st.api_port;
+        if (st.socks_port) $('portSOCKS').textContent = '127.0.0.1:' + st.socks_port;
+        if (st.tproxy_port) $('portTPROXY').textContent = String(st.tproxy_port);
+        if (st.dns_port) $('portDNS').textContent = String(st.dns_port);
+        if (st.routing_mode) {
+          $('routeMode').innerHTML = '<span class="route-chip">' + esc(st.routing_mode) + '</span>';
+        }
+
+      } catch (e) {
+        // Daemon offline
+        $('statusDot').className = 'status-dot';
+        $('statusLabel').textContent = 'Offline';
+        $('connIcon').textContent = 'OFF';
+        $('connIcon').style.background = '#1e2d48';
+        $('connIcon').style.color = 'var(--accent)';
+        $('connTitle').textContent = 'Daemon Offline';
+        $('connSub').textContent = 'The daemon is not running. Reboot or start from module manager.';
+        $('connChips').innerHTML = '';
+        $('memVal').textContent = '-- MB';
+        $('cpuVal').textContent = '--%';
+        $('btnStartTunnel').hidden = false;
+        $('btnStopTunnel').hidden = true;
+        $('tunnelActions').classList.add('single');
+      }
+    }
+
+    // ── Tunnel Control ──
+    async function tunnel(action) {
+      try {
+        const ep = action === 'start' ? '/api/v1/tunnel/start' : '/api/v1/tunnel/stop';
+        await apiPost(ep, null, 10000);
+        toast(action === 'start' ? 'Starting tunnel...' : 'Stopping tunnel...');
+        setTimeout(pollStatus, 1500);
+      } catch (e) {
+        toast('Failed: ' + e.message, true);
+      }
+    }
+
+    // ── Latency Test ──
+    async function testLatency() {
+      const b = $('btnLatency');
+      if (b) b.disabled = true;
+      $('latVal').textContent = '...';
+      $('latSub').textContent = 'Testing through tunnel...';
+      try {
+        const res = await apiGet('/api/v1/latency', 12000);
+        $('latVal').textContent = (res.latency_ms != null ? res.latency_ms : '--') + ' ms';
+        $('latSub').textContent = 'TCP to ' + (res.target || '8.8.8.8') + ' via tunnel';
+      } catch (e) {
+        $('latVal').textContent = '-- ms';
+        $('latSub').textContent = 'Failed: ' + (e.message || 'tunnel not connected');
+      } finally {
+        if (b) b.disabled = false;
+      }
+    }
+
+    // ── Profiles ──
+    async function loadProfiles() {
+      try {
+        const data = await apiGet('/api/v1/profiles');
+        profiles = data.profiles || [];
+        selectedProfileId = data.selected_id || '';
+        renderProfiles();
+      } catch (e) {
+        $('pfList').innerHTML = '<div class="pf-item"><div class="pf-info"><div class="pf-name">Unavailable</div><div class="pf-detail">Daemon is offline</div></div></div>';
+      }
+    }
+
+    function renderProfiles() {
+      $('pfCount').textContent = profiles.length + ' profile' + (profiles.length !== 1 ? 's' : '');
+      if (!profiles.length) {
+        $('pfList').innerHTML = '<div class="pf-item"><div class="pf-info"><div class="pf-name">No profiles</div><div class="pf-detail">Create a profile to get started</div></div></div>';
+        return;
+      }
+      $('pfList').innerHTML = profiles.map((p, i) => {
+        const sel = p.id === selectedProfileId;
+        const host = [p.ssh_host, p.ssh_port].filter(Boolean).join(':') || '—';
+        const mode = (p.ssh_mode || 'direct').toUpperCase();
+        const pl = p.payload_enabled ? ' +PL' : '';
+        return '<div class="pf-item' + (sel ? ' selected' : '') + '">'
+          + '<div class="pf-info">'
+            + '<div class="pf-name">' + esc(p.name || p.id) + '</div>'
+            + '<div class="pf-detail">' + esc(mode + pl) + ' · ' + esc(host) + '</div>'
+          + '</div>'
+          + '<div class="pf-actions">'
+            + (sel ? '<span class="pf-badge">active</span>'
+                   : '<button class="btn btn-outline" style="min-height:30px;font-size:0.7rem;padding:0 10px;" onclick="selectProfile(\'' + esc(p.id) + '\')">Use</button>')
+            + '<button class="pf-btn" onclick="openEditor(\'' + esc(p.id) + '\')" title="Edit">✎</button>'
+            + '<button class="pf-btn" style="color:var(--red);" onclick="deleteProfileById(\'' + esc(p.id) + '\')" title="Delete">✕</button>'
+          + '</div>'
+        + '</div>';
+      }).join('');
+    }
+
+    async function selectProfile(id) {
+      try {
+        const all = { selected_id: id, profiles };
+        await apiPut('/api/v1/profiles', all);
+        selectedProfileId = id;
+        toast('Profile selected. Restart tunnel to apply.');
+        renderProfiles();
+      } catch (e) {
+        toast('Select failed: ' + e.message, true);
+      }
+    }
+
+    function openEditor(id) {
+      editingId = id || '';
+      const p = id ? profiles.find(x => x.id === id) || {} : {};
+      $('editorTitle').textContent = id ? 'Edit Profile' : 'New Profile';
+      $('efName').value = p.name || '';
+      $('efHost').value = p.ssh_host || '';
+      $('efPort').value = p.ssh_port || 22;
+      $('efUser').value = p.ssh_user || '';
+      $('efPass').value = p.ssh_password || '';
+      $('efMode').value = p.ssh_mode || 'direct';
+      $('efSniHost').value = p.ssh_sni_host || '';
+      $('efProxyHost').value = p.http_proxy_host || '';
+      $('efProxyPort').value = p.http_proxy_port || 8080;
+      $('efPayload').value = p.payload || 'GET / HTTP/1.1[crlf]Host: [host][crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]';
+      $('efInjectionType').value = p.payload_injection_type || 'normal';
+      $('efMethod').value = p.payload_method || 'CONNECT';
+      $('efFrontQuery').checked = !!(p.payload_front_query);
+      $('efBackQuery').checked = !!(p.payload_back_query);
+      $('efDualConnect').checked = !!(p.payload_dual_connect);
+      $('efSplit').checked = !!(p.payload_split);
+      $('efDeleteBtn').style.display = id ? '' : 'none';
+      onModeChange();
+      $('editorModal').classList.add('open');
+    }
+
+    function closeEditor() { $('editorModal').classList.remove('open'); }
+
+    function onModeChange() {
+      const mode = $('efMode').value;
+      $('efSniRow').hidden = !mode.includes('sni');
+      $('efProxyRow').hidden = !mode.includes('proxy');
+    }
+
+    async function saveProfile(doSelect) {
+      try {
+        const mode = $('efMode').value;
+        const profile = {
+          id: editingId || undefined,
+          name: $('efName').value.trim() || 'SSHCustom Profile',
+          ssh_host: $('efHost').value.trim(),
+          ssh_port: parseInt($('efPort').value, 10) || 22,
+          ssh_user: $('efUser').value.trim(),
+          ssh_password: $('efPass').value,
+          ssh_mode: mode,
+          ssh_sni_host: mode.includes('sni') ? ($('efSniHost').value.trim() || $('efHost').value.trim()) : '',
+          http_proxy_host: mode.includes('proxy') ? ($('efProxyHost').value.trim() || '') : '',
+          http_proxy_port: mode.includes('proxy') ? (parseInt($('efProxyPort').value, 10) || 8080) : 0,
+          payload: $('efPayload').value,
+          payload_enabled: !!$('efPayload').value.trim(),
+          payload_injection_type: $('efInjectionType').value,
+          payload_method: $('efMethod').value,
+          payload_front_query: $('efFrontQuery').checked,
+          payload_back_query: $('efBackQuery').checked,
+          payload_dual_connect: $('efDualConnect').checked,
+          payload_split: $('efSplit').checked
+        };
+
+        // Build the full profiles payload
+        let updatedProfiles = [...profiles];
+        if (editingId) {
+          const idx = updatedProfiles.findIndex(x => x.id === editingId);
+          if (idx >= 0) updatedProfiles[idx] = profile;
+          else updatedProfiles.push(profile);
+        } else {
+          profile.id = 'pf_' + Date.now();
+          updatedProfiles.push(profile);
+        }
+
+        const payload = {
+          selected_id: doSelect ? profile.id : selectedProfileId,
+          profiles: updatedProfiles
+        };
+        await apiPut('/api/v1/profiles', payload);
+        if (doSelect) selectedProfileId = profile.id;
+        closeEditor();
+        toast('Profile saved' + (doSelect ? ' & selected.' : '.'));
+        await loadProfiles();
+      } catch (e) {
+        toast('Save failed: ' + e.message, true);
+      }
+    }
+
+    async function deleteProfile() {
+      if (!editingId) return;
+      if (!confirm('Delete this profile permanently?')) return;
+      try {
+        const updated = profiles.filter(x => x.id !== editingId);
+        const payload = {
+          selected_id: selectedProfileId === editingId ? '' : selectedProfileId,
+          profiles: updated
+        };
+        await apiPut('/api/v1/profiles', payload);
+        closeEditor();
+        toast('Profile deleted.');
+        await loadProfiles();
+      } catch (e) {
+        toast('Delete failed: ' + e.message, true);
+      }
+    }
+
+    async function deleteProfileById(id) {
+      if (!confirm('Delete this profile permanently?')) return;
+      try {
+        const updated = profiles.filter(x => x.id !== id);
+        const payload = {
+          selected_id: selectedProfileId === id ? '' : selectedProfileId,
+          profiles: updated
+        };
+        await apiPut('/api/v1/profiles', payload);
+        toast('Profile deleted.');
+        await loadProfiles();
+      } catch (e) {
+        toast('Delete failed: ' + e.message, true);
+      }
+    }
+
+    // ── Init ──
+    function startPolling() {
+      if (statusTimer) return;
+      pollStatus();
+      statusTimer = setInterval(pollStatus, 3000);
+    }
+
+    // WebUI-X integration
+    const wxKey = Object.keys(window).find(k => k.startsWith('$') && k !== '$' && typeof window[k] === 'object' && window[k] !== null && 'setLightStatusBars' in window[k]);
+    if (wxKey && window[wxKey]) {
+      try { window[wxKey].setLightStatusBars(false); } catch(_) {}
+    }
+    window.addEventListener('message', function(e) {
+      try {
+        if (typeof e.data !== 'string') return;
+        const msg = JSON.parse(e.data);
+        if (!msg || msg.type !== 'WX_ON_BACK') return;
+        if ($('editorModal').classList.contains('open')) { closeEditor(); return; }
+        if (currentPage !== 'home') { showPage('home'); return; }
+        if (window.webui && typeof window.webui.exit === 'function') { window.webui.exit(); }
+      } catch(_) {}
+    });
+
+    startPolling();
+  </script>
+</body>
+</html>

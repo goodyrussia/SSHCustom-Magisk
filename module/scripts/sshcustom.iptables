@@ -1,0 +1,321 @@
+#!/system/bin/sh
+#=============================================================================
+# SSHCustom-Magisk v3.1.0 — iptables / TPROXY / REDIRECT Manager
+# POSIX shell — no bashisms, no arrays, no [[ ]], no local
+#=============================================================================
+
+# ---- source configuration ------------------------------------------------
+BOX_DIR="${BOX_DIR:-/data/adb/sshcustom}"
+CONFIG_DIR="${BOX_DIR}/config"
+RUN_DIR="${BOX_DIR}/run"
+
+# ---- runtime ports (overridable via environment) -------------------------
+SELF_PORTS="${SELF_PORTS:-9190 1080 1088 1053}"
+TPROXY_PORT="${TPROXY_PORT:-1088}"
+DNS_PORT="${DNS_PORT:-1053}"
+FW_MARK="0x1"
+FW_MASK="0x1"
+ROUTE_TABLE="100"
+
+# ---- chain names (fixed to avoid collisions) -----------------------------
+C_TPROXY_PREROUTING="SSHC_TPROXY_PRE"
+C_TPROXY_OUTPUT="SSHC_TPROXY_OUT"
+C_REDIRECT_PREROUTING="SSHC_REDIR_PRE"
+C_REDIRECT_OUTPUT="SSHC_REDIR_OUT"
+
+# ---- private / reserved CIDRs to bypass ----------------------------------
+BYPASS_CIDRS="
+10.0.0.0/8
+100.64.0.0/10
+127.0.0.0/8
+169.254.0.0/16
+172.16.0.0/12
+192.0.0.0/24
+192.0.2.0/24
+192.88.99.0/24
+192.168.0.0/16
+198.18.0.0/15
+198.51.100.0/24
+203.0.113.0/24
+224.0.0.0/4
+240.0.0.0/4
+255.255.255.255/32
+"
+
+# ---- logging -------------------------------------------------------------
+_ipt_log() {
+	[ -n "$IPT_LOG_FILE" ] || return 0
+	echo "$(date '+%Y-%m-%d %H:%M:%S') iptables: $*" >> "$IPT_LOG_FILE"
+}
+
+# ---- iptables command wrappers -------------------------------------------
+run_ipt_command() {
+	_cmd="$1"
+	shift
+	_ipt_log "[EXEC] $_cmd -w 100 $*"
+	command "$_cmd" -w 100 "$@"
+}
+
+iptables() {
+	run_ipt_command iptables "$@"
+}
+
+ip6tables() {
+	run_ipt_command ip6tables "$@"
+}
+
+# ---- TPROXY kernel support detection -------------------------------------
+is_tproxy_supported() {
+	# Stage 1: check if module is loaded
+	if [ -d /sys/module/xt_TPROXY ]; then
+		_ipt_log "xt_TPROXY module loaded"
+		return 0
+	fi
+
+	# Stage 2: check kernel config for compile-time support
+	if [ -f /proc/config.gz ]; then
+		_zcat=""
+		if command -v zcat >/dev/null 2>&1; then
+			_zcat="zcat"
+		elif command -v gunzip >/dev/null 2>&1; then
+			_zcat="gunzip -c"
+		fi
+		if [ -n "$_zcat" ]; then
+			if $_zcat /proc/config.gz 2>/dev/null | grep -q 'CONFIG_NETFILTER_XT_TARGET_TPROXY=[ym]'; then
+				_ipt_log "TPROXY compiled in kernel (config.gz)"
+				return 0
+			fi
+		fi
+	fi
+
+	_ipt_log "TPROXY NOT available"
+	return 1
+}
+
+# ---- speed boost (sysctl tuning) -----------------------------------------
+speed_boost() {
+	_ipt_log "applying speed boost sysctl tuning"
+	sysctl -w net.core.rmem_default=262144 >/dev/null 2>&1 || true
+	sysctl -w net.core.wmem_default=262144 >/dev/null 2>&1 || true
+	sysctl -w net.core.rmem_max=67108864 >/dev/null 2>&1 || true
+	sysctl -w net.core.wmem_max=67108864 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.tcp_rmem="4096 262144 67108864" >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.tcp_wmem="4096 262144 67108864" >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.tcp_mtu_probing=1 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.tcp_slow_start_after_idle=0 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.tcp_notsent_lowat=16384 >/dev/null 2>&1 || true
+	return 0
+}
+
+# ---- read SSH host IP from runtime file ----------------------------------
+ssh_host_ip() {
+	_shi_file="${BOX_DIR}/run/ssh_host_ip"
+	[ -f "$_shi_file" ] || return 1
+	_ip="$(cat "$_shi_file" 2>/dev/null)"
+	[ -n "$_ip" ] && echo "$_ip" && return 0
+	return 1
+}
+
+# ---- build bypass rules (called by enable_*) -----------------------------
+# Arg 1: chain name to append to
+# Arg 2: 'pre' for PREROUTING, 'out' for OUTPUT
+_bypass_rules() {
+	_chain="$1"
+	_typ="$2"
+	_ssh_ip=""
+	ssh_host_ip >/dev/null 2>&1 && _ssh_ip="$(ssh_host_ip)"
+
+	# Bypass already-marked packets (prevents double-proxy loops)
+	iptables -t mangle -A "$_chain" -m mark --mark "$FW_MARK/$FW_MASK" -j ACCEPT
+	iptables -t nat    -A "$_chain" -m mark --mark "$FW_MARK/$FW_MASK" -j ACCEPT 2>/dev/null || true
+
+	# Bypass uid 0 (root) in OUTPUT chain only
+	if [ "$_typ" = "out" ]; then
+		iptables -t mangle -A "$_chain" -m owner --uid-owner 0 -j ACCEPT 2>/dev/null || true
+		iptables -t nat    -A "$_chain" -m owner --uid-owner 0 -j ACCEPT 2>/dev/null || true
+	fi
+
+	# Bypass self ports (multiport)
+	_sp="$SELF_PORTS"
+	if [ -n "$_sp" ]; then
+		iptables -t mangle -A "$_chain" -p tcp -m multiport --dports "$_sp" -j ACCEPT 2>/dev/null || true
+		iptables -t nat    -A "$_chain" -p tcp -m multiport --dports "$_sp" -j ACCEPT 2>/dev/null || true
+	fi
+
+	# Bypass SSH host IP
+	if [ -n "$_ssh_ip" ]; then
+		iptables -t mangle -A "$_chain" -d "$_ssh_ip" -j ACCEPT
+		iptables -t nat    -A "$_chain" -d "$_ssh_ip" -j ACCEPT 2>/dev/null || true
+	fi
+
+	# Bypass private CIDRs (preserve DNS for hijack)
+	for _cidr in $BYPASS_CIDRS; do
+		[ -z "$_cidr" ] && continue
+		# Non-DNS traffic to private CIDRs: bypass
+		iptables -t mangle -A "$_chain" -d "$_cidr" -p udp ! --dport 53 -j ACCEPT 2>/dev/null || true
+		iptables -t mangle -A "$_chain" -d "$_cidr" ! -p udp -j ACCEPT 2>/dev/null || true
+		iptables -t nat    -A "$_chain" -d "$_cidr" -p udp ! --dport 53 -j ACCEPT 2>/dev/null || true
+		iptables -t nat    -A "$_chain" -d "$_cidr" ! -p udp -j ACCEPT 2>/dev/null || true
+	done
+}
+
+# ---- enable TPROXY mode (mangle table + policy routing) ------------------
+enable_tproxy() {
+	_ipt_log "enabling TPROXY mode"
+	is_tproxy_supported || {
+		_ipt_log "ERROR: TPROXY not supported by kernel"
+		return 1
+	}
+
+	# Speed boost first
+	speed_boost
+
+	# ---- Create mangle custom chains ---------------------------------
+	iptables -t mangle -N "$C_TPROXY_PREROUTING" 2>/dev/null || true
+	iptables -t mangle -F "$C_TPROXY_PREROUTING"
+	iptables -t mangle -N "$C_TPROXY_OUTPUT" 2>/dev/null || true
+	iptables -t mangle -F "$C_TPROXY_OUTPUT"
+
+	# ---- Build PREROUTING chain --------------------------------------
+	# DNS hijack: UDP 53 → TPROXY to DNS_PORT (before mark bypass so
+	# re-injected local DNS with fwmark still gets caught)
+	iptables -t mangle -A "$C_TPROXY_PREROUTING" -p udp --dport 53 -j TPROXY --on-port "$DNS_PORT" --tproxy-mark "$FW_MARK"
+
+	# Bypass rules (mark, self ports, SSH host, private CIDRs)
+	_bypass_rules "$C_TPROXY_PREROUTING" "pre"
+
+	# Terminal: TPROXY everything else
+	iptables -t mangle -A "$C_TPROXY_PREROUTING" -j TPROXY --on-port "$TPROXY_PORT" --tproxy-mark "$FW_MARK"
+
+	# ---- Build OUTPUT chain ------------------------------------------
+	# DNS hijack: MARK DNS packets so policy routing sends them to lo
+	iptables -t mangle -A "$C_TPROXY_OUTPUT" -p udp --dport 53 -j MARK --set-mark "$FW_MARK"
+
+	# Bypass rules
+	_bypass_rules "$C_TPROXY_OUTPUT" "out"
+
+	# Terminal: MARK all remaining packets
+	iptables -t mangle -A "$C_TPROXY_OUTPUT" -j MARK --set-mark "$FW_MARK"
+
+	# ---- Insert jump rules into main chains ---------------------------
+	iptables -t mangle -I PREROUTING -j "$C_TPROXY_PREROUTING"
+	iptables -t mangle -I OUTPUT -j "$C_TPROXY_OUTPUT"
+
+	# ---- Policy routing for fwmark -----------------------------------
+	# Route marked packets to local stack (TPROXY-accepting listener on lo)
+	_ip_bin=""
+	command -v ip >/dev/null 2>&1 && _ip_bin="ip"
+	[ -z "$_ip_bin" ] && command -v busybox >/dev/null 2>&1 && _ip_bin="busybox ip"
+	if [ -n "$_ip_bin" ]; then
+		$_ip_bin rule add fwmark "$FW_MARK" table "$ROUTE_TABLE" 2>/dev/null || true
+		$_ip_bin route add local 0.0.0.0/0 dev lo table "$ROUTE_TABLE" 2>/dev/null || true
+		_ipt_log "policy routing: fwmark $FW_MARK → table $ROUTE_TABLE → local"
+	else
+		_ipt_log "WARNING: 'ip' command not found; policy routing NOT configured"
+	fi
+
+	_ipt_log "TPROXY mode enabled (PREROUTING+OUTPUT via mangle, fwmark $FW_MARK, table $ROUTE_TABLE)"
+	return 0
+}
+
+# ---- enable REDIRECT mode (nat table fallback — no TPROXY needed) --------
+enable_redirect() {
+	_ipt_log "enabling REDIRECT mode (nat fallback)"
+
+	speed_boost
+
+	# ---- Create nat custom chains ------------------------------------
+	iptables -t nat -N "$C_REDIRECT_PREROUTING" 2>/dev/null || true
+	iptables -t nat -F "$C_REDIRECT_PREROUTING"
+	iptables -t nat -N "$C_REDIRECT_OUTPUT" 2>/dev/null || true
+	iptables -t nat -F "$C_REDIRECT_OUTPUT"
+
+	# ---- Build PREROUTING chain --------------------------------------
+	# DNS hijack: UDP 53 → REDIRECT (DNAT) to DNS_PORT
+	iptables -t nat -A "$C_REDIRECT_PREROUTING" -p udp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
+
+	# Bypass rules
+	_bypass_rules "$C_REDIRECT_PREROUTING" "pre"
+
+	# Terminal: REDIRECT everything to TPROXY_PORT
+	iptables -t nat -A "$C_REDIRECT_PREROUTING" -j REDIRECT --to-ports "$TPROXY_PORT"
+
+	# ---- Build OUTPUT chain ------------------------------------------
+	iptables -t nat -A "$C_REDIRECT_OUTPUT" -p udp --dport 53 -j REDIRECT --to-ports "$DNS_PORT"
+
+	_bypass_rules "$C_REDIRECT_OUTPUT" "out"
+
+	iptables -t nat -A "$C_REDIRECT_OUTPUT" -j REDIRECT --to-ports "$TPROXY_PORT"
+
+	# ---- Insert jump rules into main chains ---------------------------
+	iptables -t nat -I PREROUTING -j "$C_REDIRECT_PREROUTING"
+	iptables -t nat -I OUTPUT -j "$C_REDIRECT_OUTPUT"
+
+	_ipt_log "REDIRECT mode enabled (PREROUTING+OUTPUT via nat)"
+	return 0
+}
+
+# ---- idempotent cleanup (all deletes → 2>/dev/null || true) --------------
+disable() {
+	_ipt_log "disabling all iptables rules (idempotent cleanup)"
+
+	# Remove jump rules from mangle main chains
+	iptables -t mangle -D PREROUTING -j "$C_TPROXY_PREROUTING" 2>/dev/null || true
+	iptables -t mangle -D OUTPUT -j "$C_TPROXY_OUTPUT" 2>/dev/null || true
+
+	# Flush and delete mangle custom chains
+	iptables -t mangle -F "$C_TPROXY_PREROUTING" 2>/dev/null || true
+	iptables -t mangle -X "$C_TPROXY_PREROUTING" 2>/dev/null || true
+	iptables -t mangle -F "$C_TPROXY_OUTPUT" 2>/dev/null || true
+	iptables -t mangle -X "$C_TPROXY_OUTPUT" 2>/dev/null || true
+
+	# Remove jump rules from nat main chains
+	iptables -t nat -D PREROUTING -j "$C_REDIRECT_PREROUTING" 2>/dev/null || true
+	iptables -t nat -D OUTPUT -j "$C_REDIRECT_OUTPUT" 2>/dev/null || true
+
+	# Flush and delete nat custom chains
+	iptables -t nat -F "$C_REDIRECT_PREROUTING" 2>/dev/null || true
+	iptables -t nat -X "$C_REDIRECT_PREROUTING" 2>/dev/null || true
+	iptables -t nat -F "$C_REDIRECT_OUTPUT" 2>/dev/null || true
+	iptables -t nat -X "$C_REDIRECT_OUTPUT" 2>/dev/null || true
+
+	# Clean policy routing
+	_ip_bin=""
+	command -v ip >/dev/null 2>&1 && _ip_bin="ip"
+	[ -z "$_ip_bin" ] && command -v busybox >/dev/null 2>&1 && _ip_bin="busybox ip"
+	if [ -n "$_ip_bin" ]; then
+		$_ip_bin rule del fwmark "$FW_MARK" table "$ROUTE_TABLE" 2>/dev/null || true
+		$_ip_bin route del local 0.0.0.0/0 dev lo table "$ROUTE_TABLE" 2>/dev/null || true
+		_ipt_log "policy routing removed"
+	fi
+
+	# Also clean legacy chain names from older versions
+	for _lc in SSHC_OUTPUT SSHC_PREROUTING SSHC_PROXY SSHC_DNS SSHC_HOTSPOT SSHC_HOTSPOT_DNS; do
+		iptables -t nat -D OUTPUT -j "$_lc" 2>/dev/null || true
+		iptables -t nat -D PREROUTING -j "$_lc" 2>/dev/null || true
+		iptables -t nat -F "$_lc" 2>/dev/null || true
+		iptables -t nat -X "$_lc" 2>/dev/null || true
+		iptables -t mangle -D OUTPUT -j "$_lc" 2>/dev/null || true
+		iptables -t mangle -D PREROUTING -j "$_lc" 2>/dev/null || true
+		iptables -t mangle -F "$_lc" 2>/dev/null || true
+		iptables -t mangle -X "$_lc" 2>/dev/null || true
+	done
+
+	# Clean IPv6 chains (silent)
+	for _lc in SSHC_OUTPUT SSHC_PREROUTING SSHC_PROXY SSHC_DNS SSHC_HOTSPOT SSHC_HOTSPOT_DNS \
+	           SSHC_TPROXY_PRE SSHC_TPROXY_OUT SSHC_REDIR_PRE SSHC_REDIR_OUT; do
+		ip6tables -t nat -D OUTPUT -j "$_lc" 2>/dev/null || true
+		ip6tables -t nat -D PREROUTING -j "$_lc" 2>/dev/null || true
+		ip6tables -t nat -F "$_lc" 2>/dev/null || true
+		ip6tables -t nat -X "$_lc" 2>/dev/null || true
+		ip6tables -t mangle -D OUTPUT -j "$_lc" 2>/dev/null || true
+		ip6tables -t mangle -D PREROUTING -j "$_lc" 2>/dev/null || true
+		ip6tables -t mangle -F "$_lc" 2>/dev/null || true
+		ip6tables -t mangle -X "$_lc" 2>/dev/null || true
+	done
+
+	_ipt_log "cleanup complete"
+	return 0
+}

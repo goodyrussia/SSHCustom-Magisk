@@ -1,0 +1,22 @@
+main:
+  workers: 1
+socks5:
+  port: 1080
+  address: 127.0.0.1
+  udp: udp
+  auth: none
+tcp:
+  port: 1088
+  address: '::'
+  transparent: true
+udp:
+  port: 1088
+  address: '::'
+  transparent: true
+dns:
+  port: 1053
+  address: 127.0.0.1
+  upstream: 8.8.8.8
+misc:
+  tcp-fast-open: false
+  multi-process: false
