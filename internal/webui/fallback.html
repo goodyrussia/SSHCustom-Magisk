@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSHCustom-Magisk</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f1419;color:#e7e9ea;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#1a1f24;border-radius:16px;padding:32px;max-width:420px;width:90%;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+h1{font-size:22px;margin-bottom:8px;color:#1d9bf0}
+.sub{font-size:13px;color:#71767b;margin-bottom:24px}
+.status{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px;background:#0f1419;border-radius:10px}
+.dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+.dot.on{background:#00ba7c;box-shadow:0 0 8px #00ba7c66}
+.dot.off{background:#f4212e;box-shadow:0 0 8px #f4212e66}
+.label{font-size:12px;color:#71767b}
+.value{font-size:16px;font-weight:600}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.stat{background:#0f1419;border-radius:10px;padding:12px}
+.stat .label{display:block;margin-bottom:4px}
+.actions{margin-top:24px;display:flex;gap:10px}
+button{flex:1;padding:10px 16px;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;transition:background .2s}
+.btn-connect{background:#1d9bf0;color:#fff}
+.btn-connect:hover{background:#1a8cd8}
+.btn-stop{background:#f4212e;color:#fff}
+.btn-stop:hover{background:#d91a24}
+.btn-stop:disabled{background:#2f3336;color:#71767b;cursor:not-allowed}
+.error{background:#f4212e1a;border:1px solid #f4212e33;border-radius:10px;padding:10px;margin-top:16px;font-size:13px;color:#f4212e;display:none}
+.error.show{display:block}
+#loading{display:none;text-align:center;color:#71767b;margin-top:12px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>&#9889; SSHCustom-Magisk</h1>
+  <div class="sub">v<span id="version">3.1.0</span> — Secure SSH Tunnel</div>
+
+  <div class="status">
+    <div class="dot off" id="dot"></div>
+    <div>
+      <div class="label">Connection Status</div>
+      <div class="value" id="connStatus">Disconnected</div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <span class="label">Memory</span>
+      <span class="value" id="mem">-- MB</span>
+    </div>
+    <div class="stat">
+      <span class="label">CPU</span>
+      <span class="value" id="cpu">--%</span>
+    </div>
+    <div class="stat">
+      <span class="label">Active Conns</span>
+      <span class="value" id="conns">0</span>
+    </div>
+    <div class="stat">
+      <span class="label">Uptime</span>
+      <span class="value" id="uptime">--</span>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn-connect" id="btnConnect" onclick="startTunnel()">Connect</button>
+    <button class="btn-stop" id="btnStop" onclick="stopTunnel()" disabled>Stop</button>
+  </div>
+
+  <div class="error" id="error"></div>
+  <div id="loading">Connecting...</div>
+</div>
+
+<script>
+const API = '/api/v1';
+
+function $(id) { return document.getElementById(id); }
+
+async function fetchStatus() {
+  try {
+    const r = await fetch(API + '/status');
+    const s = await r.json();
+    $('dot').className = 'dot ' + (s.connected ? 'on' : 'off');
+    $('connStatus').textContent = s.connected ? 'Connected (' + s.ssh_host + ')' : 'Disconnected';
+    $('mem').textContent = (s.mem_mb || 0).toFixed(1) + ' MB';
+    $('cpu').textContent = (s.cpu_pct || 0).toFixed(1) + '%';
+    $('conns').textContent = s.active_connections || 0;
+    $('version').textContent = s.version || '3.1.0';
+
+    const uptime = s.uptime_seconds || 0;
+    if (uptime > 0) {
+      const h = Math.floor(uptime / 3600);
+      const m = Math.floor((uptime % 3600) / 60);
+      const sec = uptime % 60;
+      $('uptime').textContent = h > 0 ? h + 'h ' + m + 'm' : m + 'm ' + sec + 's';
+    } else {
+      $('uptime').textContent = '--';
+    }
+
+    $('btnConnect').disabled = s.connected;
+    $('btnStop').disabled = !s.connected;
+    $('loading').style.display = 'none';
+
+    if (s.last_error) {
+      $('error').textContent = s.last_error;
+      $('error').classList.add('show');
+    } else {
+      $('error').classList.remove('show');
+    }
+  } catch(e) {
+    $('connStatus').textContent = 'API offline';
+  }
+}
+
+async function startTunnel() {
+  $('loading').style.display = 'block';
+  $('btnConnect').disabled = true;
+  try {
+    await fetch(API + '/tunnel/start', { method: 'POST' });
+  } catch(e) {}
+  setTimeout(fetchStatus, 2000);
+}
+
+async function stopTunnel() {
+  $('btnStop').disabled = true;
+  try {
+    await fetch(API + '/tunnel/stop', { method: 'POST' });
+  } catch(e) {}
+  setTimeout(fetchStatus, 1000);
+}
+
+fetchStatus();
+setInterval(fetchStatus, 3000);
+</script>
+</body>
+</html>
