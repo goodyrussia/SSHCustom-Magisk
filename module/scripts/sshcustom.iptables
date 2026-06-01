@@ -10,7 +10,7 @@ CONFIG_DIR="${BOX_DIR}/config"
 RUN_DIR="${BOX_DIR}/run"
 
 # ---- runtime ports (overridable via environment) -------------------------
-SELF_PORTS="${SELF_PORTS:-9190 1080 1088 1053}"
+SELF_PORTS="${SELF_PORTS:-9190,1080,1088,1053}"
 TPROXY_PORT="${TPROXY_PORT:-1088}"
 DNS_PORT="${DNS_PORT:-1053}"
 FW_MARK="0x1"

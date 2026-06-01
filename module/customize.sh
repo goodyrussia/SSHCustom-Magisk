@@ -33,13 +33,13 @@ if [ -z "$ABI" ]; then
 fi
 
 case "$ABI" in
-	arm64-v8a)
-		ARCH="arm64"
-		ui_print "- Detected ABI: arm64-v8a"
+arm64-v8a)
+        ARCH="arm64-v8a"
+        ;;
 		;;
-	armeabi-v7a|armeabi)
-		ARCH="arm"
-		ui_print "- Detected ABI: armeabi-v7a"
+armeabi-v7a|armeabi)
+        ARCH="armeabi-v7a"
+        ;;
 		;;
 	*)
 		ui_print "ERROR: Unsupported ABI: ${ABI}"
