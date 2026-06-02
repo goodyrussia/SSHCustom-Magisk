@@ -170,15 +170,20 @@ func buildPayload(template string, target Target, opts PayloadOpts) string {
 }
 
 // Front Inject: decoy HTTP request before the real CONNECT.
-// The template already contains the decoy + CONNECT structure; we add headers
-// if configured.
+// The payload template is the decoy request; we prepend it before the real CONNECT.
 func applyFrontInject(payload string, target Target, opts PayloadOpts) string {
-	return payload
+	hostPort := fmt.Sprintf("%s:%d", target.Host, target.Port)
+	protocol := "HTTP/1.0"
+	realCONNECT := fmt.Sprintf("CONNECT %s %s\r\n\r\n", hostPort, protocol)
+	return payload + realCONNECT
 }
 
 // Back Inject: CONNECT first, then decoy HTTP request after.
 func applyBackInject(payload string, target Target, opts PayloadOpts) string {
-	return payload
+	hostPort := fmt.Sprintf("%s:%d", target.Host, target.Port)
+	protocol := "HTTP/1.0"
+	realCONNECT := fmt.Sprintf("CONNECT %s %s\r\n\r\n", hostPort, protocol)
+	return realCONNECT + payload
 }
 
 // Front Query: prepends host to the CONNECT target line.

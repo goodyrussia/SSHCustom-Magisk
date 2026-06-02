@@ -32,28 +32,36 @@ type ConfigResponse struct {
 	SocksPort   int    `json:"socks_port"`
 	APIPort     int    `json:"api_port"`
 	WorkDir     string `json:"work_dir"`
+	
+	// Derived fields from profile
+	SSHSNIHost     string `json:"ssh_sni_host,omitempty"`
+	HTTPProxyHost  string `json:"http_proxy_host,omitempty"`
+	HTTPProxyPort  int    `json:"http_proxy_port,omitempty"`
+	PayloadEnabled bool   `json:"payload_enabled"`
+	Payload        string `json:"payload,omitempty"`
 }
 
 // ProfileItem mirrors config.Profile for the JSON API.
 type ProfileItem struct {
-	ID                  string `json:"id,omitempty"`
-	Name                string `json:"name"`
-	SSHHost             string `json:"ssh_host"`
-	SSHPort             int    `json:"ssh_port"`
-	SSHUser             string `json:"ssh_user"`
-	SSHPassword         string `json:"ssh_password"`
-	SSHMode             string `json:"ssh_mode"`
-	SSHSNIHost          string `json:"ssh_sni_host,omitempty"`
-	HTTPProxyHost       string `json:"http_proxy_host,omitempty"`
-	HTTPProxyPort       int    `json:"http_proxy_port,omitempty"`
-	PayloadEnabled      bool   `json:"payload_enabled"`
-	Payload             string `json:"payload,omitempty"`
+	ID                   string `json:"id,omitempty"`
+	Name                 string `json:"name"`
+	SSHHost              string `json:"ssh_host"`
+	SSHPort              int    `json:"ssh_port"`
+	SSHUser              string `json:"ssh_user"`
+	SSHPassword          string `json:"ssh_password"`
+	SSHMode              string `json:"ssh_mode"`
+	SSHSNIHost           string `json:"ssh_sni_host,omitempty"`
+	HTTPProxyHost        string `json:"http_proxy_host,omitempty"`
+	HTTPProxyPort        int    `json:"http_proxy_port,omitempty"`
+	PayloadEnabled       bool   `json:"payload_enabled"`
+	Payload              string `json:"payload,omitempty"`
 	PayloadInjectionType string `json:"payload_injection_type,omitempty"`
-	PayloadMethod       string `json:"payload_method,omitempty"`
-	PayloadFrontQuery   bool   `json:"payload_front_query"`
-	PayloadBackQuery    bool   `json:"payload_back_query"`
-	PayloadDualConnect  bool   `json:"payload_dual_connect"`
-	PayloadSplit        bool   `json:"payload_split"`
+	PayloadMethod        string `json:"payload_method,omitempty"`
+	PayloadFrontQuery    bool   `json:"payload_front_query"`
+	PayloadBackQuery     bool   `json:"payload_back_query"`
+	PayloadDualConnect   bool   `json:"payload_dual_connect"`
+	PayloadSplit         bool   `json:"payload_split"`
+	PayloadUA            string `json:"payload_ua,omitempty"`
 }
 
 // ProfilesResponse is returned by GET /api/v1/profiles.
@@ -79,6 +87,7 @@ type LatencyResponse struct {
 	Host    string `json:"host"`
 	Port    int    `json:"port"`
 	Latency int64  `json:"latency_ms"`
+	Target  string `json:"target,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
 

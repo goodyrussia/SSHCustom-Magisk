@@ -3,22 +3,24 @@ package api
 
 import (
 	"encoding/json"
-	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/goodyrussia/SSHCustom-Magisk/internal/config"
 	issh "github.com/goodyrussia/SSHCustom-Magisk/internal/ssh"
-	"github.com/goodyrussia/SSHCustom-Magisk/internal/transport"
 	"github.com/goodyrussia/SSHCustom-Magisk/internal/version"
+	"gopkg.in/yaml.v3"
 )
 
 // DaemonState holds the shared mutable state used by the API handlers.
 type DaemonState struct {
 	Connected    bool
+	Reconnecting bool
 	TunnelStart  time.Time
 	StartedAt    time.Time
 	LastError    string
@@ -26,6 +28,9 @@ type DaemonState struct {
 	MemMB        float64
 	CPUPct       float64
 	CurrentProfile string
+	TproxyPort   int
+	DNSPort      int
+	RoutingMode  string
 }
 
 // snapshot returns a point-in-time copy of the state.
@@ -37,7 +42,7 @@ func (s *DaemonState) snapshot() StatusResponse {
 	return StatusResponse{
 		Connected:         s.Connected,
 		Running:           s.Connected,
-		Reconnecting:      false,
+		Reconnecting:      s.Reconnecting,
 		Profile:           s.CurrentProfile,
 		SSHHost:           "",
 		SSHMode:           "",
@@ -47,9 +52,9 @@ func (s *DaemonState) snapshot() StatusResponse {
 		ActiveConnections: int(atomic.LoadInt32(&s.ActiveConns)),
 		APIPort:           0,
 		SocksPort:         0,
-		TproxyPort:        0,
-		DNSPort:           0,
-		RoutingMode:       "",
+		TproxyPort:        s.TproxyPort,
+		DNSPort:           s.DNSPort,
+		RoutingMode:       s.RoutingMode,
 		Version:           version.Version,
 		LastError:         s.LastError,
 	}
@@ -118,7 +123,47 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	snap.APIPort = cfg.APIPort
 	snap.SocksPort = cfg.SocksPort
 
+	// Populate TPROXY/DNS ports and routing mode from tproxy.yaml if available
+	snap.TproxyPort, snap.DNSPort, snap.RoutingMode = s.loadTproxyConfig()
+
 	writeJSON(w, 200, snap)
+}
+
+// tproxyYaml represents the tproxy.yaml configuration structure
+type tproxyYaml struct {
+	TCP struct {
+		Port int `yaml:"port"`
+	} `yaml:"tcp"`
+	DNS struct {
+		Port int `yaml:"port"`
+	} `yaml:"dns"`
+}
+
+// loadTproxyConfig reads tproxy.yaml and returns TproxyPort, DNSPort, and RoutingMode
+func (s *Server) loadTproxyConfig() (int, int, string) {
+	configDir := filepath.Dir(s.ConfigPath)
+	tproxyPath := filepath.Join(configDir, "tproxy.yaml")
+	
+	data, err := os.ReadFile(tproxyPath)
+	if err != nil {
+		return 1088, 1053, "TPROXY"
+	}
+	
+	var cfg tproxyYaml
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return 1088, 1053, "TPROXY"
+	}
+	
+	tproxyPort := cfg.TCP.Port
+	if tproxyPort == 0 {
+		tproxyPort = 1088
+	}
+	dnsPort := cfg.DNS.Port
+	if dnsPort == 0 {
+		dnsPort = 1053
+	}
+	
+	return tproxyPort, dnsPort, "TPROXY"
 }
 
 // handleConfig handles GET/PUT /api/v1/config.
@@ -226,6 +271,7 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 				PayloadBackQuery:    p.PayloadBackQuery,
 				PayloadDualConnect:  p.PayloadDualConnect,
 				PayloadSplit:        p.PayloadSplit,
+			PayloadUA:           p.PayloadUA,
 			}
 		}
 		writeJSON(w, 200, ProfilesResponse{
@@ -263,6 +309,21 @@ func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 				PayloadBackQuery:    item.PayloadBackQuery,
 				PayloadDualConnect:  item.PayloadDualConnect,
 				PayloadSplit:        item.PayloadSplit,
+			PayloadUA:           item.PayloadUA,
+			}
+		}
+		// Validate SelectedID exists in profiles list
+		if req.SelectedID != "" {
+			found := false
+			for _, p := range pf.Profiles {
+				if p.ID == req.SelectedID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				writeError(w, 400, "selected_id does not exist in profiles list")
+				return
 			}
 		}
 		if err := config.SaveProfiles(s.ProfilesPath, pf); err != nil {
@@ -311,6 +372,7 @@ func (s *Server) handleCurrentProfile(w http.ResponseWriter, r *http.Request) {
 
 	item := ProfileItem{
 		ID:                  profile.ID,
+		Name:                profile.Name,
 		SSHHost:             profile.SSHHost,
 		SSHPort:             profile.SSHPort,
 		SSHUser:             profile.SSHUser,
@@ -327,6 +389,7 @@ func (s *Server) handleCurrentProfile(w http.ResponseWriter, r *http.Request) {
 		PayloadBackQuery:    profile.PayloadBackQuery,
 		PayloadDualConnect:  profile.PayloadDualConnect,
 		PayloadSplit:        profile.PayloadSplit,
+		PayloadUA:           profile.PayloadUA,
 	}
 	writeJSON(w, 200, map[string]interface{}{
 		"selected_id": pf.SelectedID,
@@ -452,6 +515,4 @@ func (s *Server) handleLatency(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Ensure transport is imported (used by the daemon's startTunnel logic).
-var _ = transport.WritePayload
-var _ = log.Printf
+

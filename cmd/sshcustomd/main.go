@@ -75,7 +75,9 @@ func main() {
 	if workDir == "" {
 		workDir = "/data/adb/sshcustom"
 	}
-	os.MkdirAll(workDir, 0700)
+	if err := os.MkdirAll(workDir, 0700); err != nil {
+		log.Fatalf("[main] workdir create: %v", err)
+	}
 
 	// Shared state
 	st := &api.DaemonState{
@@ -108,7 +110,9 @@ func main() {
 		if err == nil {
 			if profileName != "" {
 				pf.SelectedID = profileName
-				config.SaveProfiles(*profilesPath, pf)
+				if err := config.SaveProfiles(*profilesPath, pf); err != nil {
+					return fmt.Errorf("save profiles: %w", err)
+				}
 				st.CurrentProfile = profileName
 			}
 			profile := config.GetCurrentProfile(pf)
@@ -125,8 +129,24 @@ func main() {
 		tctx, tcancel := context.WithCancel(context.Background())
 		tunnelCancel = tcancel
 
-		go runTunnel(tctx, currentCfg, st, &sshClient)
-		return nil
+		// Channel to receive initial connection result
+		startErr := make(chan error, 1)
+		go runTunnel(tctx, currentCfg, st, &sshClient, startErr)
+
+		// Wait for initial connection attempt
+		select {
+		case err := <-startErr:
+			if err != nil {
+				tunnelCancel()
+				tunnelCancel = nil
+				return err
+			}
+			return nil
+		case <-time.After(30 * time.Second):
+			tunnelCancel()
+			tunnelCancel = nil
+			return fmt.Errorf("tunnel start timeout")
+		}
 	}
 
 	stopTunnel := func() error {
@@ -220,8 +240,8 @@ func main() {
 			stopTunnel()
 			socksCancel()
 			shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer shutCancel()
 			httpSrv.Shutdown(shutCtx)
+			shutCancel()
 			time.Sleep(300 * time.Millisecond)
 			return
 		}
@@ -230,11 +250,13 @@ func main() {
 
 // runTunnel connects the SSH tunnel and blocks until the context is cancelled
 // or the connection dies. It handles reconnection with backoff.
+// If startErr is provided, the initial connection result is sent on it.
 func runTunnel(
 	ctx context.Context,
 	cfg *config.Config,
 	st *api.DaemonState,
 	clientPtr *atomic.Pointer[issh.Client],
+	startErr chan<- error,
 ) {
 	const (
 		baseDelay = 1 * time.Second
@@ -291,6 +313,13 @@ func runTunnel(
 			log.Printf("[tunnel] connect failed: %v", err)
 			st.Connected = false
 			st.LastError = err.Error()
+			if startErr != nil {
+				select {
+				case startErr <- err:
+				default:
+				}
+				startErr = nil
+			}
 			delay = nextDelay(delay, baseDelay, maxDelay)
 			continue
 		}
@@ -301,6 +330,13 @@ func runTunnel(
 		st.TunnelStart = time.Now()
 		st.LastError = ""
 		log.Printf("[tunnel] connected to %s:%d", cfg.SSHHost, cfg.SSHPort)
+		if startErr != nil {
+			select {
+			case startErr <- nil:
+			default:
+			}
+			startErr = nil
+		}
 
 		// Wait for disconnection
 		waitErr := c.Wait()
@@ -308,7 +344,9 @@ func runTunnel(
 		c.Close()
 		clientPtr.Store(nil)
 		st.Connected = false
-		st.LastError = ""
+		if waitErr != nil {
+			st.LastError = waitErr.Error()
+		}
 
 		delay = baseDelay
 
@@ -347,11 +385,11 @@ func metricsLoop(ctx context.Context, st *api.DaemonState, clientPtr *atomic.Poi
 			samp := sampler.Sample()
 			st.MemMB = samp.RSSMB
 			st.CPUPct = samp.CPUPct
+			var conns int32
 			if c := clientPtr.Load(); c != nil {
-				atomic.StoreInt32(&st.ActiveConns, int32(c.ActiveConns()))
-			} else {
-				atomic.StoreInt32(&st.ActiveConns, 0)
+				conns = int32(c.ActiveConns())
 			}
+			atomic.StoreInt32(&st.ActiveConns, conns)
 		}
 	}
 }
